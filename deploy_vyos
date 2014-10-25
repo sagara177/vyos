@@ -1,0 +1,80 @@
+#!/bin/bash
+
+function check_binaries
+{
+ if [[ ! $(type -P qemu-img) ]]; then
+  echo -e "\n No binary 'qemu-img' found, exiting!\n"
+  exit
+ fi
+
+ if [[ $(type -P qemu-system-x86_64) ]]; then
+  qemu='qemu-system-x86'
+ elif [[ $(type -P /usr/libexec/qemu-kvm) ]]; then
+  qemu='/usr/libexec/qemu-kvm'
+ else
+  echo -e "\n No binary 'qemu-system-x86' or 'qemu-kvm' found, exiting!\n"
+  exit
+ fi
+
+ if [[ ! $(type -P expect) ]]; then
+  echo -e "\nNo binary 'expect' found, exiting!\n"
+  exit
+ fi 
+}
+
+function get_names
+{
+ version=${version:-$(curl http://vyos.net/wiki/Main_Page -q -s | grep 'Current stable release' | grep -o '/[0-9]\.[0-9]\.[0-9]' | cut -d "/" -f2)}
+ iso="vyos-$version-amd64.iso"
+ image=${image:-"vyos-$version.x86_64.qcow2"}
+ sha1sum_web=$(curl http://0.us.mirrors.vyos.net/vyos/iso/release/$version/sha1sums -q -s | grep $iso | cut -d " " -f1)
+ dir=$(dirname $0)
+}
+
+function download_iso
+{
+ if [[ -f './'$iso ]]; then
+    return
+ fi
+ curl -O http://0.us.mirrors.vyos.net/vyos/iso/release/$version/$iso -q -s &
+ curl_pid=$!
+ echo -e "\nDowloading file $iso"
+ while [[ $(ps -p $curl_pid | grep curl) ]]; do
+   echo -n "."
+   sleep 1
+ done
+ echo -e "Done!"
+ sha1sum_computed=$(echo $(sha1sum $iso) | cut -d " " -f1)
+ if [[ "$sha1sum_web" != "$sha1sum_computed" ]]; then
+    echo -e "\nDownloaded file $iso is corrupted, exiting now\n"
+    exit
+ fi
+}
+
+function start_image
+{
+ /usr/bin/qemu-img create -f qcow2 $dir/$image 1G
+ $qemu -boot c -cdrom $dir/$iso -hda $dir/$image -m 1G -nographic -serial telnet:127.0.0.1:3355,server,nowait -enable-kvm &
+ qemu_pid=$!
+}
+
+function start_expect
+{
+ $dir/install_vyos
+ echo -e "\nVyOS was succesfully installed on the image '$dir/$image'\n"
+} 
+
+function cleanup
+{
+ kill $qemu_pid
+}
+ 
+check_binaries
+get_names
+download_iso
+start_image
+sleep 5
+start_expect
+sleep 5
+cleanup
+
